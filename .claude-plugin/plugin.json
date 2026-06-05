@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "vercel-integration",
+  "version": "0.1.0",
+  "description": "Vercel deployment integration for atelier agents — deploy, inspect, logs, and env vars via the official Vercel CLI",
+  "author": {
+    "name": "AkaLab-Tech",
+    "url": "https://github.com/AkaLab-Tech"
+  },
+  "homepage": "https://github.com/AkaLab-Tech/vercel-integration",
+  "repository": "https://github.com/AkaLab-Tech/vercel-integration",
+  "keywords": ["vercel", "deployment", "claude-code"]
+}
