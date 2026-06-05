@@ -118,6 +118,26 @@ vercel_cli() {
   fi
 }
 
+# Ensure the vercel CLI is installed so deploys are fast (no per-call pnpm dlx
+# download). Best-effort: a failed global install is non-fatal — vercel_cli's
+# pnpm dlx fallback still works.
+_ensure_cli() {
+  if command -v vercel >/dev/null 2>&1; then
+    log "vercel CLI present ($(command -v vercel))"
+    return 0
+  fi
+  if command -v pnpm >/dev/null 2>&1; then
+    log "vercel CLI not found — installing globally (pnpm add -g vercel)"
+    if pnpm add -g vercel >/dev/null 2>&1; then
+      log "vercel installed"
+    else
+      log "global install failed — the wrapper will fall back to 'pnpm dlx vercel@latest'"
+    fi
+  else
+    log "no pnpm and no vercel — install one; the wrapper errors without either"
+  fi
+}
+
 # Run an authenticated vercel command (loads .env, requires token).
 vrun() {
   _load_project_env
@@ -211,7 +231,7 @@ cmd_configure() {
 
   cmd_link_cli
   cmd_enable_permissions
-  command -v vercel >/dev/null 2>&1 || log "note: 'vercel' not on PATH — install with 'pnpm add -g vercel' (or it runs via 'pnpm dlx')"
+  _ensure_cli
 
   if [ "$interactive" = false ]; then
     log "non-interactive — PATH + permissions done"
