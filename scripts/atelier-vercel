@@ -1,0 +1,265 @@
+#!/usr/bin/env bash
+#
+# atelier-vercel — thin wrapper over the official Vercel CLI, for atelier agents.
+#
+# Auth is per-project: VERCEL_TOKEN (and optional VERCEL_ORG_ID /
+# VERCEL_PROJECT_ID) are read from the current project's .env (kept gitignored
+# by atelier's .env* guardrail) or from the environment. Exposes a small,
+# auditable set of subcommands; destructive operations (remove, project-rm,
+# env-rm) are intentionally left out of atelier's allowlist so they require
+# operator confirmation.
+#
+set -euo pipefail
+IFS=$'\n\t'
+
+VERSION="0.1.0"
+SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
+
+log()  { printf '==> %s\n' "$*"; }
+die()  { printf '!!  ERROR: %s\n' "$*" >&2; exit 1; }
+require() { command -v "$1" >/dev/null 2>&1 || die "missing dependency: $1"; }
+
+# atelier user-level settings.json (persists across tasks; never the per-task
+# template). Resolution order mirrors how atelier/Claude Code locate it.
+ATELIER_SETTINGS="${VERCEL_ATELIER_SETTINGS:-${ATELIER_CONFIG_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}}/settings.json}"
+
+# Permissions granted to agents for routine Vercel operations. The gated
+# commands (remove, project-rm, env-rm) are intentionally absent so they fall
+# back to operator confirmation.
+VERCEL_ALLOW='[
+  "Bash(atelier-vercel whoami:*)",
+  "Bash(atelier-vercel list:*)",
+  "Bash(atelier-vercel inspect:*)",
+  "Bash(atelier-vercel logs:*)",
+  "Bash(atelier-vercel env-ls:*)",
+  "Bash(atelier-vercel deploy:*)",
+  "Bash(atelier-vercel deploy-prod:*)",
+  "Bash(atelier-vercel env-add:*)",
+  "Bash(atelier-vercel redeploy:*)",
+  "Bash(atelier-vercel rollback:*)",
+  "Bash(atelier-vercel promote:*)",
+  "Bash(atelier-vercel link:*)",
+  "Bash(atelier-vercel pull:*)",
+  "Skill(vercel-integration:*)"
+]'
+
+usage() {
+  cat <<EOF
+${SCRIPT_NAME} ${VERSION}
+
+Thin wrapper over the official Vercel CLI. Reads VERCEL_TOKEN (and optional
+VERCEL_ORG_ID / VERCEL_PROJECT_ID) from the current project's .env (or the
+environment). Uses an installed \`vercel\`, else \`pnpm dlx vercel@latest\`.
+
+USAGE
+  ${SCRIPT_NAME} <command> [args]
+
+READ-ONLY
+  whoami                       Current Vercel scope/user
+  list [app]                   List deployments
+  inspect <url|id>             Deployment details
+  logs <url|id>                Deployment logs
+  env-ls                       List project env vars (names)
+
+WRITE (in atelier allowlist)
+  deploy [path]                Preview deployment
+  deploy-prod [path]           Production deployment (vercel deploy --prod)
+  env-add <name> [target]      Add an env var (value read from stdin)
+  redeploy <url|id>            Rebuild + redeploy
+  rollback [url|id]            Revert to a previous deployment
+  promote <url|id>             Promote a deployment to current
+  link [path]                  Link directory to a Vercel project
+  pull                         Pull project settings/env into .vercel
+
+GATED (left out of allowlist — operator confirms)
+  remove <url|id>              Delete a deployment
+  env-rm <name> [target]       Remove an env var
+  project-rm <name>            Delete a project
+
+SETUP
+  configure [--non-interactive]  PATH link + permissions, then (inside a project)
+                               write VERCEL_TOKEN to its .env.
+  link-cli [target]            Symlink this CLI onto PATH (default ~/.local/bin)
+  enable-permissions           Merge the allowlist into atelier user settings.json
+  disable-permissions          Remove that allowlist
+
+ENVIRONMENT
+  VERCEL_TOKEN                 Required. Vercel access token.
+  VERCEL_ORG_ID               Optional. Team/scope id.
+  VERCEL_PROJECT_ID           Optional. Project id (for non-interactive scope).
+  VERCEL_ENV_FILE             Optional. Path to the project .env (default: .env)
+EOF
+}
+
+# Load VERCEL_* from the project's .env without leaking unrelated variables.
+# Real environment values take precedence.
+_load_project_env() {
+  local f="${VERCEL_ENV_FILE:-.env}" line key val
+  [ -f "$f" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      VERCEL_TOKEN=*|VERCEL_ORG_ID=*|VERCEL_PROJECT_ID=*)
+        key="${line%%=*}"
+        val="${line#*=}"
+        val="${val%\"}"; val="${val#\"}"
+        val="${val%\'}"; val="${val#\'}"
+        if [ -z "${!key:-}" ]; then export "$key=$val"; fi
+        ;;
+    esac
+  done < "$f"
+}
+
+vercel_cli() {
+  if command -v vercel >/dev/null 2>&1; then
+    vercel "$@"
+  else
+    require pnpm
+    pnpm dlx vercel@latest "$@"
+  fi
+}
+
+# Run an authenticated vercel command (loads .env, requires token).
+vrun() {
+  _load_project_env
+  [ -n "${VERCEL_TOKEN:-}" ] || die "set VERCEL_TOKEN in this project's .env"
+  vercel_cli "$@"
+}
+
+cmd_whoami()      { vrun whoami; }
+cmd_list()        { vrun ls "$@"; }
+cmd_inspect()     { vrun inspect "${1:?url|id required}"; }
+cmd_logs()        { vrun logs "${1:?url|id required}"; }
+cmd_env_ls()      { vrun env ls "$@"; }
+cmd_deploy()      { vrun deploy "$@"; }
+cmd_deploy_prod() { vrun deploy --prod "$@"; }
+cmd_env_add()     { vrun env add "${1:?name required}" "${2:-production}"; }
+cmd_redeploy()    { vrun redeploy "${1:?url|id required}"; }
+cmd_rollback()    { vrun rollback "$@"; }
+cmd_promote()     { vrun promote "${1:?url|id required}"; }
+cmd_link()        { vrun link "$@"; }
+cmd_pull()        { vrun pull "$@"; }
+cmd_remove()      { vrun remove --yes "${1:?url|id required}"; }
+cmd_env_rm()      { vrun env rm "${1:?name required}" "${2:-production}" --yes; }
+cmd_project_rm()  { vrun project rm "${1:?name required}" --yes; }
+
+cmd_enable_permissions() {
+  require jq
+  local file="$ATELIER_SETTINGS" tmp
+  mkdir -p "$(dirname "$file")"
+  [ -f "$file" ] || printf '{}\n' > "$file"
+  jq empty "$file" 2>/dev/null || die "not valid JSON: ${file}"
+  tmp="$(mktemp)"
+  jq --argjson add "$VERCEL_ALLOW" '
+    .permissions = (.permissions // {})
+    | .permissions.allow = ((.permissions.allow // []) as $cur
+        | $cur + ($add - $cur))
+  ' "$file" > "$tmp" && mv "$tmp" "$file"
+  log "vercel permissions merged into ${file}"
+}
+
+cmd_disable_permissions() {
+  require jq
+  local file="$ATELIER_SETTINGS" tmp
+  [ -f "$file" ] || { log "nothing to do (${file} does not exist)"; return 0; }
+  jq empty "$file" 2>/dev/null || die "not valid JSON: ${file}"
+  tmp="$(mktemp)"
+  jq --argjson rm "$VERCEL_ALLOW" '
+    if .permissions.allow then .permissions.allow -= $rm else . end
+  ' "$file" > "$tmp" && mv "$tmp" "$file"
+  log "vercel permissions removed from ${file}"
+}
+
+# Resolve this script's real path (following symlinks), portably for bash 3.2.
+_self_path() {
+  local src="${BASH_SOURCE[0]}" dir
+  while [ -h "$src" ]; do
+    dir="$(cd -P "$(dirname "$src")" && pwd)"
+    src="$(readlink "$src")"
+    case "$src" in /*) ;; *) src="${dir}/${src}" ;; esac
+  done
+  dir="$(cd -P "$(dirname "$src")" && pwd)"
+  printf '%s/%s' "$dir" "$(basename "$src")"
+}
+
+cmd_link_cli() {
+  local target="${1:-$HOME/.local/bin/atelier-vercel}" dir
+  dir="$(dirname "$target")"
+  mkdir -p "$dir"
+  ln -sf "$(_self_path)" "$target"
+  log "linked CLI -> ${target}"
+  case ":${PATH}:" in
+    *":${dir}:"*) ;;
+    *) log "note: ${dir} is not on your PATH" ;;
+  esac
+}
+
+_set_env_var() {
+  local file="$1" key="$2" val="$3"
+  touch "$file"
+  if grep -q "^${key}=" "$file" 2>/dev/null; then
+    log "${key} already present in ${file} — leaving it"
+  else
+    printf '%s=%s\n' "$key" "$val" >> "$file"
+    log "added ${key} to ${file}"
+  fi
+}
+
+cmd_configure() {
+  local interactive=true
+  [ "${1:-}" = "--non-interactive" ] && interactive=false
+  [ -t 0 ] || interactive=false
+
+  cmd_link_cli
+  cmd_enable_permissions
+  command -v vercel >/dev/null 2>&1 || log "note: 'vercel' not on PATH — install with 'pnpm add -g vercel' (or it runs via 'pnpm dlx')"
+
+  if [ "$interactive" = false ]; then
+    log "non-interactive — PATH + permissions done"
+    log "per project: add VERCEL_TOKEN to that project's .env"
+    return 0
+  fi
+
+  if [ -e .git ] || [ -f package.json ] || [ -f .env ]; then
+    local envf="${VERCEL_ENV_FILE:-.env}" token
+    if grep -q '^VERCEL_TOKEN=' "$envf" 2>/dev/null; then
+      log "VERCEL_TOKEN already in ${envf}"
+    else
+      printf 'Vercel token for this project (input hidden, Enter to skip): '
+      read -rs token; echo
+      if [ -n "$token" ]; then _set_env_var "$envf" VERCEL_TOKEN "$token"; else log "skipped token"; fi
+    fi
+    log "auth lives in ${envf} (atelier keeps .env* gitignored)"
+  else
+    log "not inside a project — add VERCEL_TOKEN to a project's .env, then re-run from its directory."
+  fi
+}
+
+main() {
+  local cmd="${1:-}"; shift || true
+  case "$cmd" in
+    whoami)              cmd_whoami "$@" ;;
+    list)                cmd_list "$@" ;;
+    inspect)             cmd_inspect "$@" ;;
+    logs)                cmd_logs "$@" ;;
+    env-ls)              cmd_env_ls "$@" ;;
+    deploy)              cmd_deploy "$@" ;;
+    deploy-prod)         cmd_deploy_prod "$@" ;;
+    env-add)             cmd_env_add "$@" ;;
+    redeploy)            cmd_redeploy "$@" ;;
+    rollback)            cmd_rollback "$@" ;;
+    promote)             cmd_promote "$@" ;;
+    link)                cmd_link "$@" ;;
+    pull)                cmd_pull "$@" ;;
+    remove)              cmd_remove "$@" ;;
+    env-rm)              cmd_env_rm "$@" ;;
+    project-rm)          cmd_project_rm "$@" ;;
+    enable-permissions)  cmd_enable_permissions "$@" ;;
+    disable-permissions) cmd_disable_permissions "$@" ;;
+    configure)           cmd_configure "$@" ;;
+    link-cli)            cmd_link_cli "$@" ;;
+    -h|--help|help|"")   usage ;;
+    *) die "unknown command: ${cmd} (try --help)" ;;
+  esac
+}
+
+main "$@"
