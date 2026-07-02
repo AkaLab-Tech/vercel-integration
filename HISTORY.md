@@ -5,7 +5,7 @@ Completed work log. Newest first. Each entry references the PR(s) that delivered
 ## 2026-07
 
 ### Release 0.2.0 — 2026-07-02
-**PR:** _pending_ (branch `chore/release-0.2.0`)
+**PR:** [#6](https://github.com/AkaLab-Tech/vercel-integration/pull/6) — branch `chore/release-0.2.0`
 
 Version bump for the PR #5 contract change: `remove`, `env-rm` and `project-rm`
 now require `--yes` non-interactively, and production writes left the unattended
