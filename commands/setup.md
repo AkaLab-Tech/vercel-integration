@@ -28,5 +28,9 @@ step in order:
 
 PATH link status, permissions merged, whether `.env` has `VERCEL_TOKEN` (token
 presence only, never the value), whether `vercel` is on PATH (or runs via
-`pnpm dlx`), and the `whoami` result. Mention that `remove` / `env-rm` /
-`project-rm` always ask for confirmation.
+`pnpm dlx`), and the `whoami` result. Mention that the allowlist covers read
+ops and preview deploys only: production writes (`deploy-prod`, `promote`,
+`rollback`, `redeploy`, `env-add`) prompt the operator via Claude Code, and
+`remove` / `env-rm` / `project-rm` additionally require an in-CLI `--yes` or
+interactive confirmation — so an agent can never ship to or mutate production
+unattended.

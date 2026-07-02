@@ -56,11 +56,21 @@ VERCEL_PROJECT_ID=prj_xxx
 
 This plugin never edits atelier's shipped `settings.template.json`.
 `/vercel-integration:setup` (or `atelier-vercel enable-permissions`) merges the
-read/write allowlist into your **user-level** `settings.json`
+allowlist into your **user-level** `settings.json`
 (`$ATELIER_CONFIG_DIR/settings.json`) — idempotent, order-preserving, no
-clobber. The gated commands (`remove`, `env-rm`, `project-rm`) are deliberately
-omitted so they fall back to operator confirmation. Undo with
-`atelier-vercel disable-permissions`.
+clobber. The allowlist covers **read ops and preview deploys only** (`whoami`,
+`list`, `inspect`, `logs`, `env-ls`, `deploy`, `link`, `pull`).
+
+Production-affecting writes (`deploy-prod`, `promote`, `rollback`, `redeploy`,
+`env-add`) are deliberately omitted, so Claude Code prompts the operator before
+each one — an autonomous agent must never ship to production without an
+explicit human go-ahead. (`enable-permissions` also strips these entries if an
+earlier release granted them.)
+
+The destructive commands (`remove`, `env-rm`, `project-rm`) are omitted too
+**and** confirmed by the wrapper itself: pass `--yes`, or answer the
+interactive `y/N` prompt; without a terminal and without `--yes` they refuse to
+run. Undo the allowlist with `atelier-vercel disable-permissions`.
 
 ## Usage
 

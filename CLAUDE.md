@@ -22,7 +22,8 @@ The repo has no `src/` tree. All logic lives in two places:
 
 - **CLI invocation**: `atelier-vercel <command>` (or `${CLAUDE_PLUGIN_ROOT}/scripts/atelier-vercel <command>` from inside a session). Run `atelier-vercel --help` for the full reference.
 - **Auth**: per-project `VERCEL_TOKEN` in `.env` (gitignored). Machine-wide PATH link + allowlist merge via `atelier-vercel configure`.
-- **Destructive ops** (`remove`, `env-rm`, `project-rm`) are intentionally absent from the agent allowlist and require operator confirmation.
+- **Production writes** (`deploy-prod`, `promote`, `rollback`, `redeploy`, `env-add`) are intentionally absent from the agent allowlist so Claude Code prompts the operator before each one.
+- **Destructive ops** (`remove`, `env-rm`, `project-rm`) are absent from the allowlist too and additionally require an in-CLI confirmation (`--yes` flag or interactive `y/N`).
 - **CI**: no GitHub Actions workflows present.
 
 ## What this project is NOT
@@ -32,5 +33,6 @@ The repo has no `src/` tree. All logic lives in two places:
 ## Out of scope for AI agents
 
 - Never `git add .env` or any file containing `VERCEL_TOKEN`.
-- Never run destructive subcommands (`remove`, `env-rm`, `project-rm`) without explicit operator confirmation — they are gated outside the allowlist for this reason.
+- Never run production subcommands (`deploy-prod`, `promote`, `rollback`, `redeploy`, `env-add`) unless the operator explicitly asked — they are gated outside the allowlist for this reason.
+- Never run destructive subcommands (`remove`, `env-rm`, `project-rm`) without explicit operator confirmation, and never pass `--yes` to them unless the operator approved that exact operation.
 - Never edit `atelier`'s shipped `settings.template.json`; use `enable-permissions` / `disable-permissions` which target the user-level `settings.json` only.
