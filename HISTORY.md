@@ -5,7 +5,7 @@ Completed work log. Newest first. Each entry references the PR(s) that delivered
 ## 2026-07
 
 ### Self-resolving CLI launcher — `link-cli` survives plugin updates — 2026-07-02
-**PR:** _pending_ (branch `fix/self-resolving-cli-launcher`)
+**PR:** [#7](https://github.com/AkaLab-Tech/vercel-integration/pull/7) — branch `fix/self-resolving-cli-launcher`
 
 `atelier-vercel link-cli` symlinked `~/.local/bin/atelier-vercel` to the
 script's resolved path. Run from Claude Code's plugin cache that path is
