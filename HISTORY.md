@@ -5,7 +5,7 @@ Completed work log. Newest first. Each entry references the PR(s) that delivered
 ## 2026-07
 
 ### Gate production writes behind operator confirmation — 2026-07-01
-**PR:** _pending_ (branch `fix/gate-production-writes`)
+**PR:** [#5](https://github.com/AkaLab-Tech/vercel-integration/pull/5) — branch `fix/gate-production-writes`
 
 Audit hardening: the agent allowlist granted production-affecting writes, and
 the destructive wrappers passed `--yes` to the vendor CLI with no confirmation
