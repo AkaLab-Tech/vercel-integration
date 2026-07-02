@@ -5,9 +5,11 @@
 # Auth is per-project: VERCEL_TOKEN (and optional VERCEL_ORG_ID /
 # VERCEL_PROJECT_ID) are read from the current project's .env (kept gitignored
 # by atelier's .env* guardrail) or from the environment. Exposes a small,
-# auditable set of subcommands; destructive operations (remove, project-rm,
-# env-rm) are intentionally left out of atelier's allowlist so they require
-# operator confirmation.
+# auditable set of subcommands. Production-affecting writes (deploy-prod,
+# promote, rollback, redeploy, env-add) are left out of atelier's allowlist so
+# Claude Code asks the operator before running them, and destructive operations
+# (remove, env-rm, project-rm) additionally require an in-CLI confirmation
+# (--yes or an interactive y/N) before the vendor CLI is invoked.
 #
 set -euo pipefail
 IFS=$'\n\t'
@@ -23,9 +25,11 @@ require() { command -v "$1" >/dev/null 2>&1 || die "missing dependency: $1"; }
 # template). Resolution order mirrors how atelier/Claude Code locate it.
 ATELIER_SETTINGS="${VERCEL_ATELIER_SETTINGS:-${ATELIER_CONFIG_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}}/settings.json}"
 
-# Permissions granted to agents for routine Vercel operations. The gated
-# commands (remove, project-rm, env-rm) are intentionally absent so they fall
-# back to operator confirmation.
+# Permissions granted to agents for routine Vercel operations: read ops and
+# preview deploys only. Production-affecting writes (deploy-prod, promote,
+# rollback, redeploy, env-add) and destructive commands (remove, env-rm,
+# project-rm) are intentionally absent so they fall through to Claude Code's
+# default "ask" prompt and the operator confirms.
 VERCEL_ALLOW='[
   "Bash(atelier-vercel whoami:*)",
   "Bash(atelier-vercel list:*)",
@@ -33,14 +37,20 @@ VERCEL_ALLOW='[
   "Bash(atelier-vercel logs:*)",
   "Bash(atelier-vercel env-ls:*)",
   "Bash(atelier-vercel deploy:*)",
+  "Bash(atelier-vercel link:*)",
+  "Bash(atelier-vercel pull:*)",
+  "Skill(vercel-integration:*)"
+]'
+
+# Entries granted by previous releases that must no longer be auto-allowed.
+# enable-permissions strips these on upgrade and disable-permissions removes
+# them too, so stale grants in an existing settings.json get cleaned up.
+VERCEL_REVOKED='[
   "Bash(atelier-vercel deploy-prod:*)",
   "Bash(atelier-vercel env-add:*)",
   "Bash(atelier-vercel redeploy:*)",
   "Bash(atelier-vercel rollback:*)",
-  "Bash(atelier-vercel promote:*)",
-  "Bash(atelier-vercel link:*)",
-  "Bash(atelier-vercel pull:*)",
-  "Skill(vercel-integration:*)"
+  "Bash(atelier-vercel promote:*)"
 ]'
 
 usage() {
@@ -63,18 +73,21 @@ READ-ONLY
 
 WRITE (in atelier allowlist)
   deploy [path]                Preview deployment
+  link [path]                  Link directory to a Vercel project
+  pull                         Pull project settings/env into .vercel
+
+PRODUCTION (left out of allowlist — Claude Code asks the operator first)
   deploy-prod [path]           Production deployment (vercel deploy --prod)
   env-add <name> [target]      Add an env var (value read from stdin)
   redeploy <url|id>            Rebuild + redeploy
   rollback [url|id]            Revert to a previous deployment
   promote <url|id>             Promote a deployment to current
-  link [path]                  Link directory to a Vercel project
-  pull                         Pull project settings/env into .vercel
 
-GATED (left out of allowlist — operator confirms)
-  remove <url|id>              Delete a deployment
-  env-rm <name> [target]       Remove an env var
-  project-rm <name>            Delete a project
+DESTRUCTIVE (left out of allowlist AND confirmed in-CLI: pass --yes, or
+answer the interactive y/N prompt; non-interactive without --yes fails)
+  remove [--yes] <url|id>      Delete a deployment
+  env-rm [--yes] <name> [target]  Remove an env var
+  project-rm [--yes] <name>    Delete a project
 
 SETUP
   configure [--non-interactive]  PATH link + permissions, then (inside a project)
@@ -158,9 +171,57 @@ cmd_rollback()    { vrun rollback "$@"; }
 cmd_promote()     { vrun promote "${1:?url|id required}"; }
 cmd_link()        { vrun link "$@"; }
 cmd_pull()        { vrun pull "$@"; }
-cmd_remove()      { vrun remove --yes "${1:?url|id required}"; }
-cmd_env_rm()      { vrun env rm "${1:?name required}" "${2:-production}" --yes; }
-cmd_project_rm()  { vrun project rm "${1:?name required}" --yes; }
+# Confirmation gate for destructive commands. The wrappers below pass --yes to
+# the vendor CLI (bypassing its own prompt), so the wrapper must own the
+# confirmation: an explicit --yes flag, or an interactive y/N on a TTY.
+# Non-interactive without --yes dies before the vendor CLI is ever invoked.
+_confirm_destructive() {
+  local op="$1" detail="$2" assume_yes="$3" reply
+  [ "$assume_yes" = "true" ] && return 0
+  if [ ! -t 0 ]; then
+    die "'${op}' is destructive and needs confirmation: re-run with --yes, or run it from an interactive terminal (${detail})"
+  fi
+  printf "About to run '%s' — %s. Continue? [y/N] " "$op" "$detail" >&2
+  IFS= read -r reply
+  case "$reply" in
+    y|Y|yes|YES) ;;
+    *) die "aborted '${op}' (no confirmation)" ;;
+  esac
+}
+
+# Strip a --yes flag out of "$@" into ARGS_YES / ARGS_REST (bash 3.2 safe).
+_split_yes() {
+  ARGS_YES=false
+  ARGS_REST=()
+  local a
+  for a in "$@"; do
+    case "$a" in
+      --yes|-y) ARGS_YES=true ;;
+      *) ARGS_REST+=("$a") ;;
+    esac
+  done
+}
+
+cmd_remove() {
+  _split_yes "$@"
+  local target="${ARGS_REST[0]:?url|id required}"
+  _confirm_destructive "remove" "delete deployment ${target}" "$ARGS_YES"
+  vrun remove --yes "$target"
+}
+
+cmd_env_rm() {
+  _split_yes "$@"
+  local name="${ARGS_REST[0]:?name required}" target="${ARGS_REST[1]:-production}"
+  _confirm_destructive "env-rm" "remove env var ${name} from ${target}" "$ARGS_YES"
+  vrun env rm "$name" "$target" --yes
+}
+
+cmd_project_rm() {
+  _split_yes "$@"
+  local name="${ARGS_REST[0]:?name required}"
+  _confirm_destructive "project-rm" "PERMANENTLY delete project ${name} and all its deployments" "$ARGS_YES"
+  vrun project rm "$name" --yes
+}
 
 cmd_enable_permissions() {
   require jq
@@ -169,12 +230,12 @@ cmd_enable_permissions() {
   [ -f "$file" ] || printf '{}\n' > "$file"
   jq empty "$file" 2>/dev/null || die "not valid JSON: ${file}"
   tmp="$(mktemp)"
-  jq --argjson add "$VERCEL_ALLOW" '
+  jq --argjson add "$VERCEL_ALLOW" --argjson revoked "$VERCEL_REVOKED" '
     .permissions = (.permissions // {})
-    | .permissions.allow = ((.permissions.allow // []) as $cur
+    | .permissions.allow = (((.permissions.allow // []) - $revoked) as $cur
         | $cur + ($add - $cur))
   ' "$file" > "$tmp" && mv "$tmp" "$file"
-  log "vercel permissions merged into ${file}"
+  log "vercel permissions merged into ${file} (stale production grants stripped)"
 }
 
 cmd_disable_permissions() {
@@ -183,8 +244,8 @@ cmd_disable_permissions() {
   [ -f "$file" ] || { log "nothing to do (${file} does not exist)"; return 0; }
   jq empty "$file" 2>/dev/null || die "not valid JSON: ${file}"
   tmp="$(mktemp)"
-  jq --argjson rm "$VERCEL_ALLOW" '
-    if .permissions.allow then .permissions.allow -= $rm else . end
+  jq --argjson rm "$VERCEL_ALLOW" --argjson revoked "$VERCEL_REVOKED" '
+    if .permissions.allow then .permissions.allow -= ($rm + $revoked) else . end
   ' "$file" > "$tmp" && mv "$tmp" "$file"
   log "vercel permissions removed from ${file}"
 }
