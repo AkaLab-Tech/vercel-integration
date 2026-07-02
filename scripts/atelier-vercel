@@ -14,7 +14,7 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-VERSION="0.1.0"
+VERSION="0.2.0"
 SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
 
 log()  { printf '==> %s\n' "$*"; }

@@ -4,6 +4,14 @@ Completed work log. Newest first. Each entry references the PR(s) that delivered
 
 ## 2026-07
 
+### Release 0.2.0 — 2026-07-02
+**PR:** _pending_ (branch `chore/release-0.2.0`)
+
+Version bump for the PR #5 contract change: `remove`, `env-rm` and `project-rm`
+now require `--yes` non-interactively, and production writes left the unattended
+allowlist. Also realigns the CLI `VERSION` (was 0.1.0) with `plugin.json` (0.1.1),
+a pre-existing drift.
+
 ### Gate production writes behind operator confirmation — 2026-07-01
 **PR:** [#5](https://github.com/AkaLab-Tech/vercel-integration/pull/5) — branch `fix/gate-production-writes`
 
