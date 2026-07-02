@@ -6,7 +6,7 @@ allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/scripts/atelier-vercel:*), Read(.env),
 Set up the vercel-integration plugin, then report a short summary. Do every
 step in order:
 
-1. Run the machine-wide part (PATH symlink + user-level allowlist merge — never
+1. Run the machine-wide part (PATH launcher + user-level allowlist merge — never
    atelier's per-task template):
 
    ```sh
